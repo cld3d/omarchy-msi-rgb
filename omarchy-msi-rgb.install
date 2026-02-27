@@ -9,14 +9,13 @@ post_install() {
     echo ">>> You may need to unplug/replug USB or reboot for hidraw"
     echo ">>> permissions to take effect."
     echo ">>>"
-    echo ">>> Usage:"
-    echo ">>>   omarchy-msi-rgb          # Launch the TUI configurator"
-    echo ">>>   omarchy-msi-rgb-apply    # Apply saved config (for hooks)"
-    echo ">>>"
     echo ">>> To auto-apply on theme change, run:"
     echo ">>>   cp /usr/share/omarchy-msi-rgb/hooks/theme-set.sample \\"
     echo ">>>      ~/.config/omarchy/hooks/theme-set"
     echo ">>>   chmod +x ~/.config/omarchy/hooks/theme-set"
+    echo ">>>"
+    echo ">>> Optional: edit ~/.config/omarchy/msi-rgb.toml to change"
+    echo ">>> pattern or brightness (colors are derived from the theme)."
 }
 
 post_upgrade() {

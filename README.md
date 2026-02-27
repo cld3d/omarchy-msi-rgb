@@ -38,32 +38,21 @@ sudo udevadm trigger
 ### Dependencies
 
 - `python` (3.12+)
-- `python-textual` (TUI framework)
-- `python-tomlkit` (config parsing)
 - `hidapi` (USB HID communication)
 
 ## Usage
 
-### TUI Configurator
-
-```bash
-omarchy-msi-rgb
-```
-
-Opens an interactive terminal UI where you can:
-- Preview and select keyboard patterns
-- Choose which theme colors to use as primary/secondary
-- Pick light bar colors
-- Apply changes live to hardware
-- Save configuration
-
-### Headless Apply
+### Apply RGB
 
 ```bash
 omarchy-msi-rgb-apply
 ```
 
-Reads the saved configuration and applies it using the current theme's colors. Designed to be called from hooks.
+Reads the current Omarchy theme colors and applies them to the keyboard and light bar. Colors are always derived from the theme automatically:
+
+- **Keyboard primary** = `accent`
+- **Keyboard secondary** = `color1`
+- **Light bar** = `accent`
 
 ### Auto-apply on Theme Change
 
@@ -96,22 +85,18 @@ Now every `omarchy-theme-set <theme>` will automatically update your RGB.
 
 ## Configuration
 
-Saved at `~/.config/omarchy/msi-rgb.toml`:
+Optionally create `~/.config/omarchy/msi-rgb.toml` to change pattern or brightness:
 
 ```toml
 [keyboard]
 pattern = "gradient-h"
-primary = "accent"
-secondary = "color1"
 brightness = 100
 
 [lightbar]
-pattern = "solid"
-color = "accent"
 brightness = 100
 ```
 
-Color values reference Omarchy theme variables: `accent`, `foreground`, `background`, `color0`-`color15`, etc.
+Colors are not configurable — they always come from the active Omarchy theme.
 
 ## How It Works
 
@@ -126,19 +111,18 @@ Based on the reverse-engineering work of [msi-perkeyrgb](https://github.com/Aska
 
 ## Troubleshooting
 
-**"Cannot open HID device"** - Check udev rules are installed and active:
+**"Cannot open HID device"** — Check udev rules are installed and active:
 ```bash
-ls -la /dev/hidraw*          # Should show group-readable devices
-lsusb | grep 1038            # Should show KLC and ALC
+ls -la /dev/hidraw*
 ```
-Try rebooting after installing udev rules.
+Try rebooting after installing udev rules. Your user must be in the `input` group.
 
-**Device not detected** - Verify your laptop has the SteelSeries controllers:
+**Device not detected** — Verify your laptop has the SteelSeries controllers:
 ```bash
-lsusb | grep -i steelseries
+cat /sys/bus/usb/devices/*/idVendor  # look for 1038
 ```
 
-**Wrong key colors** - The GE63 keymap is used by default. If some keys show the wrong color, the keymap may need adjustment for your specific model. Open an issue.
+**Wrong key colors** — The GE63 keymap is used by default. If some keys show the wrong color, the keymap may need adjustment for your specific model. Open an issue.
 
 ## Contributing
 

@@ -17,7 +17,6 @@ install:
 	install -Dm644 lib/omarchy_msi_rgb/config.py $(SITE_PACKAGES)/config.py
 
 	# Executable scripts
-	install -Dm755 bin/omarchy-msi-rgb $(DESTDIR)$(PREFIX)/bin/omarchy-msi-rgb
 	install -Dm755 bin/omarchy-msi-rgb-apply $(DESTDIR)$(PREFIX)/bin/omarchy-msi-rgb-apply
 
 	# udev rules
@@ -31,7 +30,6 @@ install:
 
 uninstall:
 	rm -rf $(DESTDIR)$(PREFIX)/lib/python$(PYTHON_VERSION)/site-packages/omarchy_msi_rgb
-	rm -f $(DESTDIR)$(PREFIX)/bin/omarchy-msi-rgb
 	rm -f $(DESTDIR)$(PREFIX)/bin/omarchy-msi-rgb-apply
 	rm -f $(DESTDIR)/etc/udev/rules.d/99-msi-steelseries.rules
 	rm -rf $(DESTDIR)$(PREFIX)/share/omarchy-msi-rgb
