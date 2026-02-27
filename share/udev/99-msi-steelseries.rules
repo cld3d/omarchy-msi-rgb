@@ -1,8 +1,8 @@
 # udev rules for MSI Raider SteelSeries RGB controllers
-# Grants the logged-in user access to the HID devices via uaccess
+# Grants the 'input' group read/write access to the HID devices
 
 # SteelSeries KLC (Keyboard Light Controller) - per-key RGB
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="113a", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="113a", MODE="0660", GROUP="input", TAG+="uaccess"
 
 # SteelSeries ALC (Auxiliary Light Controller) - light bar / ambient
-SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="114b", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="114b", MODE="0660", GROUP="input", TAG+="uaccess"
