@@ -18,6 +18,7 @@ if os.path.isdir(_lib_dir):
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, Container
+from textual.content import Content, Span
 from textual.widgets import (
     Header,
     Footer,
@@ -28,9 +29,6 @@ from textual.widgets import (
     Rule,
 )
 from textual.reactive import reactive
-from rich.text import Text
-from rich.style import Style
-from rich.panel import Panel
 
 from omarchy_msi_rgb.config import load_config, save_config
 from omarchy_msi_rgb.theme import (
@@ -79,43 +77,38 @@ class KeyboardDisplay(Static):
         self._key_colors = colors
         self.update(self._render_keyboard())
 
-    def _render_keyboard(self) -> Text:
-        """Build a Rich Text rendering of the keyboard."""
-        text = Text()
-
-        for row_idx, row in enumerate(PHYSICAL_LAYOUT):
-            row_text = Text()
+    def _render_keyboard(self) -> Content:
+        """Build a Content rendering of the keyboard."""
+        lines = []
+        for row in PHYSICAL_LAYOUT:
+            line_text = ""
+            line_spans: list[Span] = []
+            pos = 0
             for entry in row:
                 if entry is None:
-                    row_text.append(" ")
+                    line_text += " "
+                    pos += 1
                     continue
 
                 kc, label, width = entry
                 display_w = _key_display_width(width)
-
-                # Get color for this key
                 r, g, b = self._key_colors.get(kc, (60, 60, 60))
 
-                # Determine text color for contrast
                 luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-                fg = "black" if luminance > 0.5 else "white"
+                fg = "#000000" if luminance > 0.5 else "#ffffff"
+                bg = f"#{r:02x}{g:02x}{b:02x}"
 
-                # Truncate/pad label to fit
-                disp_label = label[:display_w - 1].center(display_w - 1)
-                row_text.append(
-                    f"{disp_label} ",
-                    style=Style(
-                        color=fg,
-                        bgcolor=f"rgb({r},{g},{b})",
-                        bold=True,
-                    ),
+                disp_label = label[:display_w - 1].center(display_w - 1) + " "
+                start = pos
+                line_text += disp_label
+                pos += len(disp_label)
+                line_spans.append(
+                    Span(start, pos, f"bold {fg} on {bg}")
                 )
 
-            text.append(row_text)
-            if row_idx < len(PHYSICAL_LAYOUT) - 1:
-                text.append("\n")
+            lines.append(Content(line_text, line_spans))
 
-        return text
+        return Content("\n").join(lines)
 
 
 class LightbarDisplay(Static):
@@ -130,16 +123,12 @@ class LightbarDisplay(Static):
         self._color = color
         self.update(self._render_bar())
 
-    def _render_bar(self) -> Text:
+    def _render_bar(self) -> Content:
         r, g, b = self._color
         bar_width = 60
         block = "\u2588" * bar_width
-        text = Text()
-        text.append(
-            block,
-            style=Style(color=f"rgb({r},{g},{b})"),
-        )
-        return text
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
+        return Content(block, [Span(0, bar_width, color_hex)])
 
 
 class ColorSwatch(Static):
@@ -155,13 +144,14 @@ class ColorSwatch(Static):
         self._color = color
         self.update(self._render())
 
-    def _render(self) -> Text:
+    def _render(self) -> Content:
         r, g, b = self._color
-        text = Text()
-        text.append("\u2588\u2588\u2588\u2588", style=Style(color=f"rgb({r},{g},{b})"))
+        swatch = "\u2588\u2588\u2588\u2588"
         hex_str = rgb_to_hex(r, g, b)
-        text.append(f" {self._label} ({hex_str})")
-        return text
+        suffix = f" {self._label} ({hex_str})"
+        text = swatch + suffix
+        color_hex = f"#{r:02x}{g:02x}{b:02x}"
+        return Content(text, [Span(0, len(swatch), color_hex)])
 
 
 # --- Main App ---
