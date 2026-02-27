@@ -121,6 +121,43 @@ class HIDDevice:
                 "Install hidapi: sudo pacman -S hidapi"
             )
         if not cls._initialized:
+            # Set up function signatures to prevent pointer truncation on 64-bit
+            # hid_init() -> int
+            cls._lib.hid_init.argtypes = []
+            cls._lib.hid_init.restype = ctypes.c_int
+
+            # hid_open(vid, pid, serial) -> hid_device*
+            cls._lib.hid_open.argtypes = [
+                ctypes.c_ushort,  # vendor_id
+                ctypes.c_ushort,  # product_id
+                ctypes.c_wchar_p, # serial_number (NULL for any)
+            ]
+            cls._lib.hid_open.restype = ctypes.c_void_p
+
+            # hid_close(dev) -> void
+            cls._lib.hid_close.argtypes = [ctypes.c_void_p]
+            cls._lib.hid_close.restype = None
+
+            # hid_write(dev, data, length) -> int
+            cls._lib.hid_write.argtypes = [
+                ctypes.c_void_p,  # hid_device*
+                ctypes.c_char_p,  # data
+                ctypes.c_size_t,  # length
+            ]
+            cls._lib.hid_write.restype = ctypes.c_int
+
+            # hid_send_feature_report(dev, data, length) -> int
+            cls._lib.hid_send_feature_report.argtypes = [
+                ctypes.c_void_p,  # hid_device*
+                ctypes.c_char_p,  # data
+                ctypes.c_size_t,  # length
+            ]
+            cls._lib.hid_send_feature_report.restype = ctypes.c_int
+
+            # hid_error(dev) -> wchar_t*
+            cls._lib.hid_error.argtypes = [ctypes.c_void_p]
+            cls._lib.hid_error.restype = ctypes.c_wchar_p
+
             cls._lib.hid_init()
             cls._initialized = True
 
@@ -149,20 +186,22 @@ class HIDDevice:
         """Send a feature report (used for color data packets)."""
         if not self._device:
             raise HIDAPIError("Device not open")
-        buf = ctypes.create_string_buffer(data)
-        ret = self._lib.hid_send_feature_report(self._device, buf, len(data))
+        ret = self._lib.hid_send_feature_report(self._device, data, len(data))
         if ret < 0:
-            raise HIDAPIError(f"hid_send_feature_report failed (returned {ret})")
+            err = self._lib.hid_error(self._device)
+            raise HIDAPIError(
+                f"hid_send_feature_report failed (returned {ret}): {err}"
+            )
         sleep(INTER_COMMAND_DELAY)
 
     def send_output_report(self, data: bytes):
         """Send an output report (used for refresh command)."""
         if not self._device:
             raise HIDAPIError("Device not open")
-        buf = ctypes.create_string_buffer(data)
-        ret = self._lib.hid_write(self._device, buf, len(data))
+        ret = self._lib.hid_write(self._device, data, len(data))
         if ret < 0:
-            raise HIDAPIError(f"hid_write failed (returned {ret})")
+            err = self._lib.hid_error(self._device)
+            raise HIDAPIError(f"hid_write failed (returned {ret}): {err}")
         sleep(INTER_COMMAND_DELAY)
 
     def __enter__(self):
