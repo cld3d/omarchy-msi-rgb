@@ -12,6 +12,7 @@ https://github.com/Askannz/msi-perkeyrgb
 import ctypes
 import ctypes.util
 import os
+from pathlib import Path
 import subprocess
 import sys
 from time import sleep
@@ -219,16 +220,23 @@ def build_refresh_packet() -> bytes:
 # --- High-level device controllers ---
 
 def _check_device_exists(vid: int, pid: int) -> bool:
-    """Check if a USB device with the given VID:PID exists."""
+    """Check if a USB device with the given VID:PID exists via sysfs."""
     vid_hex = f"{vid:04x}"
     pid_hex = f"{pid:04x}"
     try:
-        result = subprocess.run(
-            ["lsusb"], capture_output=True, text=True, timeout=5
-        )
-        target = f"{vid_hex}:{pid_hex}"
-        return target in result.stdout.lower()
-    except (subprocess.SubprocessError, FileNotFoundError):
+        usb_devices = Path("/sys/bus/usb/devices")
+        if not usb_devices.exists():
+            return False
+        for device_dir in usb_devices.iterdir():
+            try:
+                dev_vid = (device_dir / "idVendor").read_text().strip()
+                dev_pid = (device_dir / "idProduct").read_text().strip()
+                if dev_vid == vid_hex and dev_pid == pid_hex:
+                    return True
+            except (IOError, OSError):
+                continue
+        return False
+    except (IOError, OSError):
         return False
 
 
