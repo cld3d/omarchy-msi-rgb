@@ -1,0 +1,546 @@
+#!/usr/bin/env python3
+"""
+MSI RGB Pattern Configuration TUI.
+
+Interactive terminal interface for selecting and previewing RGB patterns
+on MSI Raider laptops with SteelSeries controllers. Colors are derived
+from the active omarchy theme.
+"""
+
+import sys
+import os
+
+# Add the library path
+_lib_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib")
+if os.path.isdir(_lib_dir):
+    sys.path.insert(0, _lib_dir)
+
+from textual.app import App, ComposeResult
+from textual.binding import Binding
+from textual.containers import Horizontal, Vertical, Container
+from textual.widgets import (
+    Header,
+    Footer,
+    Static,
+    Select,
+    Button,
+    Label,
+    Rule,
+)
+from textual.reactive import reactive
+from rich.text import Text
+from rich.style import Style
+from rich.panel import Panel
+
+from omarchy_msi_rgb.config import load_config, save_config
+from omarchy_msi_rgb.theme import (
+    load_theme_colors,
+    get_current_theme_name,
+    rgb_to_hex,
+    COLOR_VARIABLES,
+)
+from omarchy_msi_rgb.patterns import (
+    KEYBOARD_PATTERNS,
+    KEYBOARD_PATTERN_DESCRIPTIONS,
+    LIGHTBAR_PATTERNS,
+    generate_keyboard_colors,
+    generate_lightbar_color,
+    resolve_color,
+)
+from omarchy_msi_rgb.keymap import (
+    PHYSICAL_LAYOUT,
+    LINUX_TO_MSI,
+    FN_MSI_KEYCODE,
+    get_all_linux_keycodes,
+)
+from omarchy_msi_rgb.core import KeyboardRGB, LightbarRGB, HIDAPIError
+
+
+# --- Keyboard visualization widget ---
+
+# How many terminal columns each key-width-unit takes
+KEY_UNIT_WIDTH = 4
+
+# Map of key widths to display widths in characters
+def _key_display_width(width: float) -> int:
+    """Convert key width units to terminal character width."""
+    return max(3, int(width * KEY_UNIT_WIDTH))
+
+
+class KeyboardDisplay(Static):
+    """Renders a visual keyboard with per-key colors."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._key_colors: dict[int, tuple[int, int, int]] = {}
+
+    def set_colors(self, colors: dict[int, tuple[int, int, int]]):
+        """Update the displayed key colors (linux_keycode -> RGB)."""
+        self._key_colors = colors
+        self.update(self._render_keyboard())
+
+    def _render_keyboard(self) -> Text:
+        """Build a Rich Text rendering of the keyboard."""
+        text = Text()
+
+        for row_idx, row in enumerate(PHYSICAL_LAYOUT):
+            row_text = Text()
+            for entry in row:
+                if entry is None:
+                    row_text.append(" ")
+                    continue
+
+                kc, label, width = entry
+                display_w = _key_display_width(width)
+
+                # Get color for this key
+                r, g, b = self._key_colors.get(kc, (60, 60, 60))
+
+                # Determine text color for contrast
+                luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
+                fg = "black" if luminance > 0.5 else "white"
+
+                # Truncate/pad label to fit
+                disp_label = label[:display_w - 1].center(display_w - 1)
+                row_text.append(
+                    f"{disp_label} ",
+                    style=Style(
+                        color=fg,
+                        bgcolor=f"rgb({r},{g},{b})",
+                        bold=True,
+                    ),
+                )
+
+            text.append(row_text)
+            if row_idx < len(PHYSICAL_LAYOUT) - 1:
+                text.append("\n")
+
+        return text
+
+
+class LightbarDisplay(Static):
+    """Renders a visual light bar strip."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self._color = (128, 128, 128)
+
+    def set_color(self, color: tuple[int, int, int]):
+        """Update the displayed light bar color."""
+        self._color = color
+        self.update(self._render_bar())
+
+    def _render_bar(self) -> Text:
+        r, g, b = self._color
+        bar_width = 60
+        block = "\u2588" * bar_width
+        text = Text()
+        text.append(
+            block,
+            style=Style(color=f"rgb({r},{g},{b})"),
+        )
+        return text
+
+
+class ColorSwatch(Static):
+    """A small colored square with label."""
+
+    def __init__(self, label: str = "", color: tuple[int, int, int] = (128, 128, 128), **kwargs):
+        super().__init__(**kwargs)
+        self._label = label
+        self._color = color
+
+    def set_color(self, label: str, color: tuple[int, int, int]):
+        self._label = label
+        self._color = color
+        self.update(self._render())
+
+    def _render(self) -> Text:
+        r, g, b = self._color
+        text = Text()
+        text.append("\u2588\u2588\u2588\u2588", style=Style(color=f"rgb({r},{g},{b})"))
+        hex_str = rgb_to_hex(r, g, b)
+        text.append(f" {self._label} ({hex_str})")
+        return text
+
+
+# --- Main App ---
+
+class MSIRGBApp(App):
+    """MSI RGB Pattern Configuration."""
+
+    CSS = """
+    Screen {
+        background: $surface;
+    }
+
+    #main-container {
+        padding: 1 2;
+    }
+
+    #keyboard-section {
+        margin-bottom: 1;
+    }
+
+    #keyboard-display {
+        margin: 0 1;
+        padding: 1;
+        background: #111111;
+        border: solid $primary;
+    }
+
+    #lightbar-section {
+        margin-top: 1;
+        margin-bottom: 1;
+    }
+
+    #lightbar-display {
+        margin: 0 1;
+        padding: 0 1;
+        height: 3;
+        content-align: center middle;
+        background: #111111;
+        border: solid $primary;
+    }
+
+    .config-row {
+        height: 3;
+        margin: 0 1;
+    }
+
+    .config-row Label {
+        width: 12;
+        padding-top: 1;
+    }
+
+    .config-row Select {
+        width: 30;
+    }
+
+    .config-row ColorSwatch {
+        width: 30;
+        padding-top: 1;
+    }
+
+    #section-label-keyboard {
+        text-style: bold;
+        color: $text;
+        padding: 0 1;
+    }
+
+    #section-label-lightbar {
+        text-style: bold;
+        color: $text;
+        padding: 0 1;
+    }
+
+    #button-bar {
+        margin-top: 1;
+        height: 3;
+        align: center middle;
+    }
+
+    #button-bar Button {
+        margin: 0 1;
+    }
+
+    #status-bar {
+        height: 1;
+        margin: 0 1;
+        color: $text-muted;
+    }
+
+    #theme-info {
+        height: 1;
+        margin: 0 1;
+        color: $accent;
+        text-style: bold;
+    }
+
+    #hw-status {
+        height: 1;
+        margin: 0 1;
+        color: $text-muted;
+    }
+    """
+
+    BINDINGS = [
+        Binding("q", "quit", "Quit"),
+        Binding("a", "apply", "Apply"),
+        Binding("s", "save_apply", "Save & Apply"),
+        Binding("r", "reset", "Reset"),
+    ]
+
+    TITLE = "MSI RGB Configuration"
+
+    def __init__(self):
+        super().__init__()
+        self._config = load_config()
+        self._theme_colors = load_theme_colors()
+        self._theme_name = get_current_theme_name()
+        self._kb = KeyboardRGB()
+        self._lb = LightbarRGB()
+        self._kb_available = self._kb.is_available()
+        self._lb_available = self._lb.is_available()
+
+    def compose(self) -> ComposeResult:
+        yield Header()
+
+        with Vertical(id="main-container"):
+            # Theme info
+            yield Static(
+                f"Theme: {self._theme_name}",
+                id="theme-info",
+            )
+
+            # Hardware status
+            kb_status = "detected" if self._kb_available else "not found"
+            lb_status = "detected" if self._lb_available else "not found"
+            yield Static(
+                f"Keyboard: {kb_status} | Light bar: {lb_status}",
+                id="hw-status",
+            )
+
+            yield Rule()
+
+            # Keyboard section
+            yield Static("Keyboard", id="section-label-keyboard")
+            yield KeyboardDisplay(id="keyboard-display")
+
+            with Horizontal(classes="config-row"):
+                yield Label("Pattern:")
+                yield Select(
+                    [
+                        (f"{name} - {KEYBOARD_PATTERN_DESCRIPTIONS[name]}", name)
+                        for name in KEYBOARD_PATTERNS
+                    ],
+                    value=self._config["keyboard"]["pattern"],
+                    id="kb-pattern",
+                    allow_blank=False,
+                )
+
+            with Horizontal(classes="config-row"):
+                yield Label("Primary:")
+                yield Select(
+                    self._make_color_options(),
+                    value=self._config["keyboard"]["primary"],
+                    id="kb-primary",
+                    allow_blank=False,
+                )
+                yield ColorSwatch(id="swatch-primary")
+
+            with Horizontal(classes="config-row"):
+                yield Label("Secondary:")
+                yield Select(
+                    self._make_color_options(),
+                    value=self._config["keyboard"]["secondary"],
+                    id="kb-secondary",
+                    allow_blank=False,
+                )
+                yield ColorSwatch(id="swatch-secondary")
+
+            yield Rule()
+
+            # Lightbar section
+            yield Static("Light Bar", id="section-label-lightbar")
+            yield LightbarDisplay(id="lightbar-display")
+
+            with Horizontal(classes="config-row"):
+                yield Label("Pattern:")
+                yield Select(
+                    [(f"{name} - {desc}", name) for name, desc in LIGHTBAR_PATTERNS.items()],
+                    value=self._config["lightbar"]["pattern"],
+                    id="lb-pattern",
+                    allow_blank=False,
+                )
+
+            with Horizontal(classes="config-row"):
+                yield Label("Color:")
+                yield Select(
+                    self._make_color_options(),
+                    value=self._config["lightbar"]["color"],
+                    id="lb-color",
+                    allow_blank=False,
+                )
+                yield ColorSwatch(id="swatch-lightbar")
+
+            yield Rule()
+
+            # Buttons
+            with Horizontal(id="button-bar"):
+                yield Button("Apply [a]", variant="primary", id="btn-apply")
+                yield Button("Save & Apply [s]", variant="success", id="btn-save")
+                yield Button("Reset [r]", variant="warning", id="btn-reset")
+
+            yield Static("", id="status-bar")
+
+        yield Footer()
+
+    def _make_color_options(self) -> list[tuple[str, str]]:
+        """Build select options with color names and hex values."""
+        options = []
+        for var in COLOR_VARIABLES:
+            if var in self._theme_colors:
+                r, g, b = self._theme_colors[var]
+                hex_str = rgb_to_hex(r, g, b)
+                options.append((f"{var} ({hex_str})", var))
+        return options
+
+    def on_mount(self):
+        """Initial render after mount."""
+        self._refresh_preview()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """Handle any select widget change."""
+        widget_id = event.select.id
+        value = event.value
+
+        if value is Select.BLANK:
+            return
+
+        if widget_id == "kb-pattern":
+            self._config["keyboard"]["pattern"] = value
+        elif widget_id == "kb-primary":
+            self._config["keyboard"]["primary"] = value
+        elif widget_id == "kb-secondary":
+            self._config["keyboard"]["secondary"] = value
+        elif widget_id == "lb-pattern":
+            self._config["lightbar"]["pattern"] = value
+        elif widget_id == "lb-color":
+            self._config["lightbar"]["color"] = value
+
+        self._refresh_preview()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button clicks."""
+        if event.button.id == "btn-apply":
+            self.action_apply()
+        elif event.button.id == "btn-save":
+            self.action_save_apply()
+        elif event.button.id == "btn-reset":
+            self.action_reset()
+
+    def action_apply(self):
+        """Apply current settings to hardware."""
+        self._apply_to_hardware()
+
+    def action_save_apply(self):
+        """Save settings and apply to hardware."""
+        save_config(self._config)
+        self._apply_to_hardware()
+        self._set_status("Configuration saved and applied.")
+
+    def action_reset(self):
+        """Reset to defaults."""
+        from omarchy_msi_rgb.config import DEFAULT_CONFIG, _deep_copy
+        self._config = _deep_copy(DEFAULT_CONFIG)
+
+        # Update select widgets
+        self.query_one("#kb-pattern", Select).value = self._config["keyboard"]["pattern"]
+        self.query_one("#kb-primary", Select).value = self._config["keyboard"]["primary"]
+        self.query_one("#kb-secondary", Select).value = self._config["keyboard"]["secondary"]
+        self.query_one("#lb-pattern", Select).value = self._config["lightbar"]["pattern"]
+        self.query_one("#lb-color", Select).value = self._config["lightbar"]["color"]
+
+        self._refresh_preview()
+        self._set_status("Reset to defaults.")
+
+    def _refresh_preview(self):
+        """Update the keyboard and lightbar preview displays."""
+        kb_cfg = self._config["keyboard"]
+        lb_cfg = self._config["lightbar"]
+
+        # Generate keyboard preview colors (in Linux keycode space)
+        from omarchy_msi_rgb.patterns import KEYBOARD_PATTERNS
+        pattern_fn = KEYBOARD_PATTERNS.get(kb_cfg["pattern"])
+        if pattern_fn:
+            linux_colors = pattern_fn(
+                self._theme_colors,
+                primary=kb_cfg.get("primary", "accent"),
+                secondary=kb_cfg.get("secondary", "color1"),
+            )
+            # Apply brightness
+            brightness = kb_cfg.get("brightness", 100)
+            if brightness < 100:
+                from omarchy_msi_rgb.patterns import apply_brightness
+                linux_colors = apply_brightness(linux_colors, brightness)
+
+            self.query_one("#keyboard-display", KeyboardDisplay).set_colors(linux_colors)
+
+        # Generate lightbar preview
+        lb_color = generate_lightbar_color(
+            pattern=lb_cfg.get("pattern", "solid"),
+            theme_colors=self._theme_colors,
+            color_ref=lb_cfg.get("color", "accent"),
+            brightness=lb_cfg.get("brightness", 100),
+        )
+        self.query_one("#lightbar-display", LightbarDisplay).set_color(lb_color)
+
+        # Update swatches
+        primary_var = kb_cfg.get("primary", "accent")
+        secondary_var = kb_cfg.get("secondary", "color1")
+        lb_color_var = lb_cfg.get("color", "accent")
+
+        primary_rgb = resolve_color(primary_var, self._theme_colors)
+        secondary_rgb = resolve_color(secondary_var, self._theme_colors)
+        lb_color_rgb = resolve_color(lb_color_var, self._theme_colors)
+
+        self.query_one("#swatch-primary", ColorSwatch).set_color(primary_var, primary_rgb)
+        self.query_one("#swatch-secondary", ColorSwatch).set_color(secondary_var, secondary_rgb)
+        self.query_one("#swatch-lightbar", ColorSwatch).set_color(lb_color_var, lb_color_rgb)
+
+    def _apply_to_hardware(self):
+        """Send current colors to the actual hardware."""
+        errors = []
+
+        kb_cfg = self._config["keyboard"]
+        lb_cfg = self._config["lightbar"]
+
+        # Keyboard
+        if self._kb_available:
+            try:
+                msi_colors = generate_keyboard_colors(
+                    pattern=kb_cfg.get("pattern", "gradient-h"),
+                    theme_colors=self._theme_colors,
+                    primary=kb_cfg.get("primary", "accent"),
+                    secondary=kb_cfg.get("secondary", "color1"),
+                    brightness=kb_cfg.get("brightness", 100),
+                )
+                self._kb.set_per_key(msi_colors)
+            except HIDAPIError as e:
+                errors.append(f"Keyboard: {e}")
+        else:
+            errors.append("Keyboard device not found")
+
+        # Lightbar
+        if self._lb_available:
+            try:
+                lb_color = generate_lightbar_color(
+                    pattern=lb_cfg.get("pattern", "solid"),
+                    theme_colors=self._theme_colors,
+                    color_ref=lb_cfg.get("color", "accent"),
+                    brightness=lb_cfg.get("brightness", 100),
+                )
+                self._lb.set_all(*lb_color)
+            except HIDAPIError as e:
+                errors.append(f"Lightbar: {e}")
+        else:
+            errors.append("Lightbar device not found")
+
+        if errors:
+            self._set_status(f"Errors: {'; '.join(errors)}")
+        else:
+            self._set_status("Applied to hardware.")
+
+    def _set_status(self, msg: str):
+        """Update the status bar."""
+        self.query_one("#status-bar", Static).update(msg)
+
+
+def main():
+    app = MSIRGBApp()
+    app.run()
+
+
+if __name__ == "__main__":
+    main()

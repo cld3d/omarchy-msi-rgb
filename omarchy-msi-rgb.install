@@ -1,0 +1,32 @@
+post_install() {
+    echo ">>> Reloading udev rules..."
+    udevadm control --reload-rules 2>/dev/null
+    udevadm trigger 2>/dev/null
+
+    echo ""
+    echo ">>> omarchy-msi-rgb installed!"
+    echo ">>>"
+    echo ">>> You may need to unplug/replug USB or reboot for hidraw"
+    echo ">>> permissions to take effect."
+    echo ">>>"
+    echo ">>> Usage:"
+    echo ">>>   omarchy-msi-rgb          # Launch the TUI configurator"
+    echo ">>>   omarchy-msi-rgb-apply    # Apply saved config (for hooks)"
+    echo ">>>"
+    echo ">>> To auto-apply on theme change, run:"
+    echo ">>>   cp /usr/share/omarchy-msi-rgb/hooks/theme-set.sample \\"
+    echo ">>>      ~/.config/omarchy/hooks/theme-set"
+    echo ">>>   chmod +x ~/.config/omarchy/hooks/theme-set"
+}
+
+post_upgrade() {
+    post_install
+}
+
+post_remove() {
+    udevadm control --reload-rules 2>/dev/null
+    udevadm trigger 2>/dev/null
+    echo ">>> omarchy-msi-rgb removed."
+    echo ">>> You may want to remove ~/.config/omarchy/msi-rgb.toml"
+    echo ">>> and ~/.config/omarchy/hooks/theme-set if it references this package."
+}

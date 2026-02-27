@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""
+Apply saved MSI RGB pattern using the current omarchy theme colors.
+
+This script is designed to be called from the omarchy theme-set hook.
+It reads the saved pattern configuration and current theme colors,
+generates the appropriate per-key color map, and sends it to hardware.
+
+Exits silently if devices are not available (e.g., wrong machine).
+"""
+
+import sys
+import os
+
+# Add the library path
+_lib_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib")
+if os.path.isdir(_lib_dir):
+    sys.path.insert(0, _lib_dir)
+# Also check system install path
+for _sp in sys.path:
+    if "site-packages" in _sp:
+        break
+
+from omarchy_msi_rgb.config import load_config
+from omarchy_msi_rgb.theme import load_theme_colors, get_current_theme_name
+from omarchy_msi_rgb.patterns import generate_keyboard_colors, generate_lightbar_color
+from omarchy_msi_rgb.core import KeyboardRGB, LightbarRGB, HIDAPIError
+
+
+def main():
+    config = load_config()
+    colors = load_theme_colors()
+    theme_name = get_current_theme_name()
+
+    errors = []
+
+    # Apply keyboard pattern
+    kb_cfg = config.get("keyboard", {})
+    try:
+        kb = KeyboardRGB()
+        if kb.is_available():
+            msi_colors = generate_keyboard_colors(
+                pattern=kb_cfg.get("pattern", "gradient-h"),
+                theme_colors=colors,
+                primary=kb_cfg.get("primary", "accent"),
+                secondary=kb_cfg.get("secondary", "color1"),
+                brightness=kb_cfg.get("brightness", 100),
+            )
+            kb.set_per_key(msi_colors)
+    except HIDAPIError as e:
+        errors.append(f"Keyboard: {e}")
+    except Exception as e:
+        errors.append(f"Keyboard: {e}")
+
+    # Apply lightbar color
+    lb_cfg = config.get("lightbar", {})
+    try:
+        lb = LightbarRGB()
+        if lb.is_available():
+            lb_color = generate_lightbar_color(
+                pattern=lb_cfg.get("pattern", "solid"),
+                theme_colors=colors,
+                color_ref=lb_cfg.get("color", "accent"),
+                brightness=lb_cfg.get("brightness", 100),
+            )
+            lb.set_all(*lb_color)
+    except HIDAPIError as e:
+        errors.append(f"Lightbar: {e}")
+    except Exception as e:
+        errors.append(f"Lightbar: {e}")
+
+    if errors:
+        for err in errors:
+            print(f"omarchy-msi-rgb: {err}", file=sys.stderr)
+        return 1
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# Apply MSI RGB pattern with the new theme colors.
+# Copy this file to ~/.config/omarchy/hooks/theme-set to activate.
+omarchy-msi-rgb-apply 2>/dev/null &
