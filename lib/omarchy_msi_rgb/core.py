@@ -65,7 +65,7 @@ REGION_KEYCODES = {
 # ALC (lightbar) controller regions (GE68 HX)
 # These are different from keyboard regions - discovered via USB probing
 ALC_LIGHTBAR_REGION = 0x2A
-ALC_LIGHTBAR_KEYCODES = list(range(42))  # Keycodes 0-41 in a packet
+ALC_LIGHTBAR_KEYCODES = list(range(55))  # Keycodes 0-54 (55 LEDs)
 ALC_LOGO_REGION = 0x01
 ALC_LOGO_KEYCODE = 0
 
@@ -348,14 +348,25 @@ class LightbarRGB:
         Set the light bar and logo to a single color.
 
         Uses ALC-specific regions discovered via USB probing:
-        - Light bar: region 0x2A, keycodes 0-63
+        - Light bar: region 0x2A, keycodes 0-54 (55 LEDs)
         - Logo: region 0x01, keycode 0
         """
         with HIDDevice(self.vid, self.pid) as dev:
-            # Send lightbar colors (region 0x2A, keycodes 0-63)
+            # Send lightbar colors (region 0x2A, keycodes 0-54)
+            # Must split into multiple packets since each holds max 42 keycodes
             lightbar_colors = {kc: (r, g, b) for kc in ALC_LIGHTBAR_KEYCODES}
-            packet = self._build_alc_packet(ALC_LIGHTBAR_REGION, lightbar_colors)
-            dev.send_feature_report(packet)
+            
+            # First packet: keycodes 0-41
+            first_packet_colors = {kc: c for kc, c in lightbar_colors.items() if kc < 42}
+            if first_packet_colors:
+                packet = self._build_alc_packet(ALC_LIGHTBAR_REGION, first_packet_colors)
+                dev.send_feature_report(packet)
+            
+            # Second packet: keycodes 42-54
+            second_packet_colors = {kc: c for kc, c in lightbar_colors.items() if kc >= 42}
+            if second_packet_colors:
+                packet = self._build_alc_packet(ALC_LIGHTBAR_REGION, second_packet_colors)
+                dev.send_feature_report(packet)
 
             # Send logo color (region 0x01, keycode 0)
             logo_colors = {ALC_LOGO_KEYCODE: (r, g, b)}
