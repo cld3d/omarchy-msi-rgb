@@ -62,6 +62,13 @@ REGION_KEYCODES = {
     ],
 }
 
+# ALC (lightbar) controller regions (GE68 HX)
+# These are different from keyboard regions - discovered via USB probing
+ALC_LIGHTBAR_REGION = 0x2A
+ALC_LIGHTBAR_KEYCODES = list(range(42))  # Keycodes 0-41 in a packet
+ALC_LOGO_REGION = 0x01
+ALC_LOGO_KEYCODE = 0
+
 # Reverse lookup: MSI keycode -> region name
 _MSI_KEYCODE_TO_REGION = {}
 for _region, _codes in REGION_KEYCODES.items():
@@ -338,29 +345,50 @@ class LightbarRGB:
 
     def set_all(self, r: int, g: int, b: int):
         """
-        Set the entire light bar to a single color.
+        Set the light bar and logo to a single color.
 
-        Uses the same protocol as the keyboard (set_color_all equivalent
-        from msi-perkeyrgb), which has been confirmed working on GE68 HX.
+        Uses ALC-specific regions discovered via USB probing:
+        - Light bar: region 0x2A, keycodes 0-63
+        - Logo: region 0x01, keycode 0
         """
-        all_colors = {}
-        for region_codes in REGION_KEYCODES.values():
-            for keycode in region_codes:
-                if keycode != 0:
-                    all_colors[keycode] = (r, g, b)
-
-        region_grouped: dict[str, dict[int, tuple[int, int, int]]] = {
-            rname: {} for rname in REGION_IDS
-        }
-        for msi_keycode, color in all_colors.items():
-            region = _MSI_KEYCODE_TO_REGION.get(msi_keycode)
-            if region:
-                region_grouped[region][msi_keycode] = color
-
         with HIDDevice(self.vid, self.pid) as dev:
-            for region_name in REGION_IDS:
-                colors = region_grouped[region_name]
-                if colors:
-                    packet = build_color_packet(region_name, colors)
-                    dev.send_feature_report(packet)
+            # Send lightbar colors (region 0x2A, keycodes 0-63)
+            lightbar_colors = {kc: (r, g, b) for kc in ALC_LIGHTBAR_KEYCODES}
+            packet = self._build_alc_packet(ALC_LIGHTBAR_REGION, lightbar_colors)
+            dev.send_feature_report(packet)
+
+            # Send logo color (region 0x01, keycode 0)
+            logo_colors = {ALC_LOGO_KEYCODE: (r, g, b)}
+            packet = self._build_alc_packet(ALC_LOGO_REGION, logo_colors)
+            dev.send_feature_report(packet)
+
             dev.send_output_report(build_refresh_packet())
+
+    def _build_alc_packet(self, region_id: int, keycode_colors: dict[int, tuple[int, int, int]]) -> bytes:
+        """
+        Build a 524-byte color packet for ALC (lightbar/logo) controller.
+        """
+        packet = [0x0E, 0x00, region_id & 0xFF, 0x00]
+
+        keys_written = 0
+        for keycode, (r, g, b) in keycode_colors.items():
+            fragment = [
+                r & 0xFF, g & 0xFF, b & 0xFF,
+                0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                0x01, 0x00,
+                keycode & 0xFF,
+            ]
+            packet.extend(fragment)
+            keys_written += 1
+            if keys_written >= NB_KEYS_PER_REGION:
+                break
+
+        # Pad remaining slots
+        while keys_written < NB_KEYS_PER_REGION:
+            packet.extend([0x00] * KEY_FRAGMENT_SIZE)
+            keys_written += 1
+
+        # Footer
+        packet.extend([0x00] * 14 + [0x08, 0x39])
+
+        return bytes(packet)
