@@ -62,6 +62,9 @@ def load_theme_colors(path: Path | str | None = None) -> dict[str, tuple[int, in
     """
     if path is None:
         path = THEME_COLORS_PATH
+        if not path.exists():
+            theme_name = get_current_theme_name()
+            path = Path.home() / ".local" / "share" / "omarchy" / "themes" / theme_name / "colors.toml"
     else:
         path = Path(path)
 
